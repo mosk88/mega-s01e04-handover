@@ -1,0 +1,50 @@
+# Plan morning-digest § 3–4 (ADR 0003). Runs rig, saves /digest/<night> as one HTML file and
+# deploys it to GitHub Pages. The page is built here, never committed: the marker comes from the
+# LANE_MARKER secret, so clean-up is "delete the secret, run again" over the same link.
+name: preview
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview
+        default: '2026-10-28'
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Save the page
+        env:
+          LANE_MARKER: ${{ secrets.LANE_MARKER }}
+          NIGHT: ${{ inputs.night }}
+        run: |
+          mkdir -p _site
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8787/health > /dev/null && break; sleep 1; done
+          curl -sf "http://localhost:8787/digest/$NIGHT" -o "_site/digest-$NIGHT.html"
+          cp "_site/digest-$NIGHT.html" _site/index.html
+          if grep -q 'no marker set' _site/index.html; then echo 'banner: no marker set'; else echo 'banner: marker set'; fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deploy
+        uses: actions/deploy-pages@v4
